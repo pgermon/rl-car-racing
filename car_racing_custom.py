@@ -1,36 +1,3 @@
-"""
-Easiest continuous control task to learn from pixels, a top-down racing
-environment.
-
-Discrete control is reasonable in this environment as well, on/off
-discretization is fine.
-
-State consists of STATE_W x STATE_H pixels.
-
-The reward is -0.1 every frame and +1000/N for every track tile visited, where
-N is the total number of tiles visited in the track. For example, if you have
-finished in 732 frames, your reward is 1000 - 0.1*732 = 926.8 points.
-
-The game is solved when the agent consistently gets 900+ points. The generated
-track is random every episode.
-
-The episode finishes when all the tiles are visited. The car also can go
-outside of the PLAYFIELD -  that is far off the track, then it will get -100
-and die.
-
-Some indicators are shown at the bottom of the window along with the state RGB
-buffer. From left to right: the true speed, four ABS sensors, the steering
-wheel position and gyroscope.
-
-To play yourself (it's rather fast for humans), type:
-python gym/envs/box2d/car_racing.py
-
-Remember it's a powerful rear-wheel drive car -  don't press the accelerator
-and turn at the same time.
-
-Created by Oleg Klimov. Licensed on the same terms as the rest of OpenAI Gym.
-"""
-
 import sys
 import math
 import numpy as np
@@ -73,6 +40,55 @@ BORDER_MIN_COUNT = 4
 
 ROAD_COLOR = [0.4, 0.4, 0.4]
 
+action_space = [
+    np.array([-0.8, 0.2, 0]), np.array([0.8, 0.2, 0]), np.array([-0.2, 0.8, 0]) , np.array([0.2, 0.8, 0]), 
+    np.array([0, 1, 0]), np.array([0, 0.5, 0]), np.array([-1, 0, 0]), np.array([1, 0, 0]), 
+    np.array([-1, 0, 0.3]), np.array([-1, 0, 0.8]), np.array([1, 0, 0.3]), np.array([1, 0, 0.8]), 
+    np.array([-0.5, 0, 0.3]), np.array([-0.5, 0, 0.8]), np.array([0.5, 0, 0.3]), np.array([0.5, 0, 0.8])
+]
+
+action_dict = {i: a for i, a in enumerate(action_space)}
+
+
+class FrictionDetector(contactListener):
+    def __init__(self, env):
+        contactListener.__init__(self)
+        self.env = env
+
+    def BeginContact(self, contact):
+        self._contact(contact, True)
+
+    def EndContact(self, contact):
+        self._contact(contact, False)
+
+    def _contact(self, contact, begin):
+        tile = None
+        obj = None
+        u1 = contact.fixtureA.body.userData
+        u2 = contact.fixtureB.body.userData
+        if u1 and "road_friction" in u1.__dict__:
+            tile = u1
+            obj = u2
+        if u2 and "road_friction" in u2.__dict__:
+            tile = u2
+            obj = u1
+        if not tile:
+            return
+
+        tile.color[0] = ROAD_COLOR[0]
+        tile.color[1] = ROAD_COLOR[1]
+        tile.color[2] = ROAD_COLOR[2]
+        if not obj or "tiles" not in obj.__dict__:
+            return
+        if begin:
+            obj.tiles.add(tile)
+            if not tile.road_visited:
+                tile.road_visited = True
+                self.env.reward += 1000.0 / len(self.env.track)
+                self.env.tile_visited_count += 1
+        else:
+            obj.tiles.remove(tile)
+
 
 class CarRacing:
     metadata = {
@@ -82,7 +98,8 @@ class CarRacing:
 
     def __init__(self, verbose=1):
         self.seed()
-        self.contactListener_keepref = FrictionDetector(self)
+        self.env = gym.make('CarRacing-v1')
+        self.contactListener_keepref = FrictionDetector(self.env)
         self.world = Box2D.b2World((0, 0), contactListener=self.contactListener_keepref)
         self.viewer = None
         self.invisible_state_window = None
@@ -96,9 +113,9 @@ class CarRacing:
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
         )
 
-        self.action_space = spaces.Discrete(
-            
-        )  # steer, gas, brake
+        self.action_space = action_space
+        
+        self.action_dict = action_dict 
 
         self.observation_space = spaces.Box(
             low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8
@@ -302,6 +319,7 @@ class CarRacing:
         self.track = track
         return True
 
+    
     def reset(self):
         self._destroy()
         self.reward = 0.0
@@ -323,7 +341,9 @@ class CarRacing:
 
         return self.step(None)[0]
 
+    
     def step(self, action):
+        
         if action is not None:
             self.car.steer(-action[0])
             self.car.gas(action[1])
@@ -353,6 +373,7 @@ class CarRacing:
 
         return self.state, step_reward, done, {}
 
+    
     def render(self, mode="human"):
         assert mode in ["human", "state_pixels", "rgb_array"]
         if self.viewer is None:
@@ -421,6 +442,7 @@ class CarRacing:
             geom.render()
         self.viewer.onetime_geoms = []
         t.disable()
+        self.render_indicators(WINDOW_W, WINDOW_H)
 
         if mode == "human":
             win.flip()
@@ -435,11 +457,13 @@ class CarRacing:
 
         return arr
 
+    
     def close(self):
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None
 
+            
     def render_road(self):
         colors = [0.4, 0.8, 0.4, 1.0] * 4
         polygons_ = [
@@ -488,4 +512,72 @@ class CarRacing:
         )
         vl.draw(gl.GL_QUADS)
 
+        
+    def render_indicators(self, W, H):
+        s = W / 40.0
+        h = H / 40.0
+        colors = [0, 0, 0, 1] * 4
+        polygons = [W, 0, 0, W, 5 * h, 0, 0, 5 * h, 0, 0, 0, 0]
+
+        def vertical_ind(place, val, color):
+            colors.extend([color[0], color[1], color[2], 1] * 4)
+            polygons.extend(
+                [
+                    place * s,
+                    h + h * val,
+                    0,
+                    (place + 1) * s,
+                    h + h * val,
+                    0,
+                    (place + 1) * s,
+                    h,
+                    0,
+                    (place + 0) * s,
+                    h,
+                    0,
+                ]
+            )
+
+            
+        def horiz_ind(place, val, color):
+            colors.extend([color[0], color[1], color[2], 1] * 4)
+            polygons.extend(
+                [
+                    (place + 0) * s,
+                    4 * h,
+                    0,
+                    (place + val) * s,
+                    4 * h,
+                    0,
+                    (place + val) * s,
+                    2 * h,
+                    0,
+                    (place + 0) * s,
+                    2 * h,
+                    0,
+                ]
+            )
+
+        true_speed = np.sqrt(
+            np.square(self.car.hull.linearVelocity[0])
+            + np.square(self.car.hull.linearVelocity[1])
+        )
+
+        vertical_ind(5, 0.02 * true_speed, (1, 1, 1))
+        vertical_ind(7, 0.01 * self.car.wheels[0].omega, (0.0, 0, 1))  # ABS sensors
+        vertical_ind(8, 0.01 * self.car.wheels[1].omega, (0.0, 0, 1))
+        vertical_ind(9, 0.01 * self.car.wheels[2].omega, (0.2, 0, 1))
+        vertical_ind(10, 0.01 * self.car.wheels[3].omega, (0.2, 0, 1))
+        horiz_ind(20, -10.0 * self.car.wheels[0].joint.angle, (0, 1, 0))
+        horiz_ind(30, -0.8 * self.car.hull.angularVelocity, (1, 0, 0))
+        vl = pyglet.graphics.vertex_list(
+            len(polygons) // 3, ("v3f", polygons), ("c4f", colors)  # gl.GL_QUADS,
+        )
+        vl.draw(gl.GL_QUADS)
+        self.score_label.text = "%04i" % self.reward
+        self.score_label.draw()
+
+
+if __name__ == "__main__":
     
+    print(action_dict)
