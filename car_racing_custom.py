@@ -1,6 +1,7 @@
 import sys
 import math
 import numpy as np
+import random
 
 import Box2D
 from Box2D.b2 import fixtureDef
@@ -47,8 +48,6 @@ action_space = [
     np.array([-0.5, 0, 0.3]), np.array([-0.5, 0, 0.8]), np.array([0.5, 0, 0.3]), np.array([0.5, 0, 0.8])
 ]
 
-action_dict = {i: a for i, a in enumerate(action_space)}
-
 
 class FrictionDetector(contactListener):
     def __init__(self, env):
@@ -90,16 +89,17 @@ class FrictionDetector(contactListener):
             obj.tiles.remove(tile)
 
 
-class CarRacing:
+class CarRacing(gym.Env, EzPickle):
     metadata = {
         "render.modes": ["human", "rgb_array", "state_pixels"],
         "video.frames_per_second": FPS,
     }
 
     def __init__(self, verbose=1):
+        EzPickle.__init__(self)
         self.seed()
-        self.env = gym.make('CarRacing-v1')
-        self.contactListener_keepref = FrictionDetector(self.env)
+        self.env = gym.make("CarRacing-v1")
+        self.contactListener_keepref = FrictionDetector(self)
         self.world = Box2D.b2World((0, 0), contactListener=self.contactListener_keepref)
         self.viewer = None
         self.invisible_state_window = None
@@ -114,17 +114,76 @@ class CarRacing:
         )
 
         self.action_space = action_space
-        
-        self.action_dict = action_dict 
 
         self.observation_space = spaces.Box(
             low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8
         )
 
+        
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
+    
+    def reset(self):
+        self._destroy()
+        self.reward = 0.0
+        self.prev_reward = 0.0
+        self.tile_visited_count = 0
+        self.t = 0.0
+        self.road_poly = []
+
+        while True:
+            success = self._create_track()
+            if success:
+                break
+            if self.verbose == 1:
+                print(
+                    "retry to generate track (normal if there are not many"
+                    "instances of this message)"
+                )
+        self.car = Car(self.world, *self.track[0][1:4])
+
+        return self.step(None)[0]
+
+    
+    def step(self, action):
+        if action is not None:
+            self.car.steer(-action[0])
+            self.car.gas(action[1])
+            self.car.brake(action[2])
+
+        self.car.step(1.0 / FPS)
+        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+        self.t += 1.0 / FPS
+
+        self.state = self.render("state_pixels")
+
+        step_reward = 0
+        done = False
+        if action is not None:  # First step without action, called from reset()
+            self.reward -= 0.1
+            # We actually don't want to count fuel spent, we want car to be faster.
+            # self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
+            self.car.fuel_spent = 0.0
+            step_reward = self.reward - self.prev_reward
+            self.prev_reward = self.reward
+            if self.tile_visited_count == len(self.track):
+                done = True
+            x, y = self.car.hull.position
+            if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
+                done = True
+                step_reward = -100
+
+        return self.state, step_reward, done, {}
+    
+    
+    def close(self):
+        if self.viewer is not None:
+            self.viewer.close()
+            self.viewer = None
+            
+            
     def _destroy(self):
         if not self.road:
             return
@@ -320,60 +379,6 @@ class CarRacing:
         return True
 
     
-    def reset(self):
-        self._destroy()
-        self.reward = 0.0
-        self.prev_reward = 0.0
-        self.tile_visited_count = 0
-        self.t = 0.0
-        self.road_poly = []
-
-        while True:
-            success = self._create_track()
-            if success:
-                break
-            if self.verbose == 1:
-                print(
-                    "retry to generate track (normal if there are not many"
-                    "instances of this message)"
-                )
-        self.car = Car(self.world, *self.track[0][1:4])
-
-        return self.step(None)[0]
-
-    
-    def step(self, action):
-        
-        if action is not None:
-            self.car.steer(-action[0])
-            self.car.gas(action[1])
-            self.car.brake(action[2])
-
-        self.car.step(1.0 / FPS)
-        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
-        self.t += 1.0 / FPS
-
-        self.state = self.render("state_pixels")
-
-        step_reward = 0
-        done = False
-        if action is not None:  # First step without action, called from reset()
-            self.reward -= 0.1
-            # We actually don't want to count fuel spent, we want car to be faster.
-            # self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
-            self.car.fuel_spent = 0.0
-            step_reward = self.reward - self.prev_reward
-            self.prev_reward = self.reward
-            if self.tile_visited_count == len(self.track):
-                done = True
-            x, y = self.car.hull.position
-            if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
-                done = True
-                step_reward = -100
-
-        return self.state, step_reward, done, {}
-
-    
     def render(self, mode="human"):
         assert mode in ["human", "state_pixels", "rgb_array"]
         if self.viewer is None:
@@ -457,13 +462,6 @@ class CarRacing:
 
         return arr
 
-    
-    def close(self):
-        if self.viewer is not None:
-            self.viewer.close()
-            self.viewer = None
-
-            
     def render_road(self):
         colors = [0.4, 0.8, 0.4, 1.0] * 4
         polygons_ = [
@@ -512,7 +510,6 @@ class CarRacing:
         )
         vl.draw(gl.GL_QUADS)
 
-        
     def render_indicators(self, W, H):
         s = W / 40.0
         h = H / 40.0
@@ -538,7 +535,6 @@ class CarRacing:
                 ]
             )
 
-            
         def horiz_ind(place, val, color):
             colors.extend([color[0], color[1], color[2], 1] * 4)
             polygons.extend(
@@ -577,7 +573,58 @@ class CarRacing:
         self.score_label.text = "%04i" % self.reward
         self.score_label.draw()
 
+        
+class RandomAgent(object):
+    """The world's simplest agent!"""
+    def __init__(self, action_space):
+        self.action_space = action_space
+        print(action_space)
 
-if __name__ == "__main__":
+    def act(self, observation, reward, done):
+        return random.choice(self.action_space)
     
-    print(action_dict)
+    
+if __name__ == "__main__":
+    from pyglet.window import key
+    from gym.envs.registration import registry, register, make, spec
+    
+    register(
+        id='CarRacing-v1',
+        entry_point='gym.envs.box2d:CarRacing',
+        max_episode_steps=2000,
+        reward_threshold=900,
+    )
+
+    
+    env = CarRacing()
+    agent = RandomAgent(env.action_space)
+    env.render()  
+        
+    isopen = True
+    
+    while isopen:
+        
+        ob = env.reset()
+        total_reward = 0.0
+        steps = 0
+        restart = False
+        reward = 0
+        done = False
+        
+        while True:
+            
+            action = agent.act(ob, reward, done)
+            ob, reward, done, _ = env.step(action)
+            total_reward += reward
+            
+            if steps % 200 == 0 or done:
+                print("\naction " + str(["{:+0.2f}".format(x) for x in action]))
+                print("step {} total_reward {:+0.2f}".format(steps, total_reward))
+                
+            steps += 1
+            isopen = env.render()
+            
+            if done or restart or isopen == False:
+                break
+                
+    env.close()
