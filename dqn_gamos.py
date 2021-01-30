@@ -3,8 +3,9 @@ import numpy as np
 import gym
 from gym.envs.registration import registry, register, make, spec
 
+import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import Dense, Activation, Flatten, Convolution2D, Permute
+from keras.layers import Dense, Activation, Flatten, Convolution2D, Permute, Input
 from keras.optimizers import Adam
 import keras.backend as K
 
@@ -33,26 +34,58 @@ ENV_NAME = 'CarRacing-v1'
 env = CarRacing()
 np.random.seed(123)
 env.seed(123)
-print(env.action_space)
+print("nb actions = ", env.action_space)
 nb_actions = len(env.action_space)
+print("observation_space.shape = ", env.observation_space.shape)
+input_shape = env.observation_space.shape
 
-
-# Next, we build our model. We use the same model that was described by Mnih et al. (2015).
-input_shape = INPUT_SHAPE + (WINDOW_LENGTH,)
-
-def build_model(input_shape, num_actions):
+'''def build_model(input_shape, num_actions):
     input = Input(shape=(input_shape))
     x = Flatten()(input)
     x = Dense(16, activation='relu')(x)
     x = Dense(16, activation='relu')(x)
     x = Dense(16, activation='relu')(x)
     output = Dense(num_actions, activation='linear')(x)
-    model = Model(inputs=input, outputs=output)
+    model = tf.keras.Model(inputs=input, outputs=output)
+    print(model.summary())
+    return model'''
+
+def build_model(input_space, nb_actions):
+    model = Sequential()    
+    model.add(Dense(24, activation='relu', input_shape=input_space))
+    model.add(Dense(24, activation='relu'))
+    model.add(Dense(nb_actions, activation='linear'))
     print(model.summary())
     return model
 
+model = build_model(input_shape, nb_actions)
+
+'''model = Sequential()
+model.add(Convolution2D(32, (8, 8), input_shape=input_shape))
+model.add(Activation('relu'))
+model.add(Convolution2D(64, (4, 4)))
+model.add(Activation('relu'))
+model.add(Convolution2D(64, (3, 3)))
+model.add(Activation('relu'))
+model.add(Flatten())
+model.add(Dense(512))
+model.add(Activation('relu'))
+model.add(Dense(nb_actions))
+model.add(Activation('linear'))
+print(model.summary())'''
+
 # Finally, we configure and compile our agent. You can use every built-in Keras optimizer and
 # even the metrics!
+
+
+def build_agent(model, actions):
+    policy = BoltzmannQPolicy()
+    memory = SequentialMemory(limit=50000, window_length=1)
+    dqn = DQNAgent(model=model, memory=memory, policy=policy, 
+                  nb_actions=actions, nb_steps_warmup=10, target_model_update=1e-2)
+    return dqn
+
+    
 memory = SequentialMemory(limit=50000, window_length=WINDOW_LENGTH)
 
 # Select a policy. We use eps-greedy action selection, which means that a random action is selected
@@ -68,8 +101,6 @@ policy = LinearAnnealedPolicy(EpsGreedyQPolicy(), attr='eps', value_max=1., valu
 # is Boltzmann-style exploration:
 # policy = BoltzmannQPolicy(tau=1.)
 # Feel free to give it a try!
-
-model = build_model(input_shape, nb_actions)
 
 dqn = DQNAgent(model=model, nb_actions=nb_actions, policy=policy, memory=memory,
                nb_steps_warmup=10, target_model_update=0.01)
