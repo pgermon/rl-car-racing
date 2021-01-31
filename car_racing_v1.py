@@ -43,7 +43,7 @@ class CarRacing:
         # Case we overcome tolerance, apply penalty 
         if self.nb_offroad >= self.offroad_tolerance:
             reward += self.offroad_penalty
-            self.nb_offroad = 0
+            done = True
             
         return obs, reward, done, info
     
