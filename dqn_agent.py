@@ -1,13 +1,12 @@
-from PIL import Image
 import numpy as np
 
 import gym
 from gym.envs.registration import registry, register, make, spec
 
-from keras.models import Sequential
-from keras.layers import Dense, Activation, Flatten, Convolution2D, Permute
-from keras.optimizers import Adam
-import keras.backend as K
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Activation, Flatten, Convolution2D, Permute, Input
+from tensorflow.keras.optimizers import Adam
+import tensorflow.keras.backend as K
 
 from rl.agents.dqn import DQNAgent
 from rl.policy import LinearAnnealedPolicy, BoltzmannQPolicy, EpsGreedyQPolicy
@@ -30,8 +29,6 @@ register(
     
 # Get the environment and extract the number of actions.
 env = CarRacing()
-np.random.seed(123)
-env.seed(123)
 print(env.action_space)
 nb_actions = len(env.action_space)
 
@@ -39,7 +36,8 @@ nb_actions = len(env.action_space)
 # Next, we build our model. We use the same model that was described by Mnih et al. (2015).
 model = Sequential()
 
-model.add(Convolution2D(32, (8, 8), input_shape=INPUT_SHAPE))
+model.add(Input(INPUT_SHAPE))
+model.add(Convolution2D(32, (8, 8)))
 model.add(Activation('relu'))
 model.add(Convolution2D(64, (4, 4)))
 model.add(Activation('relu'))
