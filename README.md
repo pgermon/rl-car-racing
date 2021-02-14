@@ -2,7 +2,7 @@
 
 Authors: [Paul Germon](https://github.com/pgermon) and [Johan Chataignier](https://github.com/JohanChataigne)  
 
-This projects aims to train a DQNAgent on the Gym OpenAI Car-Racing environment.
+This projects aims to train a DQNAgent on the Gym OpenAI Car-Racing environment. We created a custom environment in `car_racing_v1.py` in order to make the action space discrete instead of continuous.
 
 ## Installation
 
