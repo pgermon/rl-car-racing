@@ -19,7 +19,7 @@ class CarRacing:
         self.action_space = action_space
         self.observation_space = self.env.observation_space
         self.nb_offroad = 0
-        self.offroad_tolerance = 5
+        self.offroad_tolerance = 50
         self.offroad_penalty = -100
         
         
